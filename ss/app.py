@@ -16,7 +16,7 @@ DEFAULT_OUTPUT_FORECAST_SHEET = "forecast"
 DEFAULT_OUTPUT_MODELINFO_SHEET = "model_info"
 
 DEFAULT_MIN_YEAR = 1965
-DEFAULT_MIN_OBS = 12
+DEFAULT_MIN_OBS = 15
 DEFAULT_TARGET_YEAR = 2032
 DEFAULT_P = [0, 1]
 DEFAULT_D = [0, 1]
@@ -30,44 +30,6 @@ DEFAULT_OLD_YEAR = 1988
 # ------------------------------
 # Helper functions
 # ------------------------------
-
-# ------------------------------
-# Simple access control
-# ------------------------------
-
-def check_login(username: str, password: str) -> bool:
-    expected_user = st.secrets.get("AUTH_USERNAME", "")
-    expected_pass = st.secrets.get("AUTH_PASSWORD", "")
-    return username == expected_user and password == expected_pass
-
-
-def require_login():
-    if st.session_state.get("authenticated", False):
-        with st.sidebar:
-            st.success("Logged in")
-            if st.button("Log out"):
-                st.session_state.authenticated = False
-                st.rerun()
-        return
-
-    st.title("ARIMA Groundwater Forecast App")
-    st.subheader("Login")
-    st.info("Please enter your username and password to access the app.")
-
-    with st.form("login_form"):
-        username = st.text_input("Username")
-        password = st.text_input("Password", type="password")
-        submitted = st.form_submit_button("Log in", type="primary")
-
-    if submitted:
-        if check_login(username, password):
-            st.session_state.authenticated = True
-            st.rerun()
-        else:
-            st.error("Invalid username or password.")
-
-    st.stop()
-
 
 def is_year_col(c) -> bool:
     try:
@@ -439,17 +401,17 @@ def make_plot(hist_df: pd.DataFrame, fc_df: pd.DataFrame, station: str, old_year
 
         if show_outer:
             fig.add_trace(go.Scatter(x=x_fc, y=hi68, mode="lines", line=dict(width=0), name="", showlegend=False, hoverinfo="skip"))
-            fig.add_trace(go.Scatter(x=x_fc, y=lo68, mode="lines", line=dict(width=0), fill="tonexty", name="Outer band (68%)"))
+            fig.add_trace(go.Scatter(x=x_fc, y=lo68, mode="lines", line=dict(width=0), fill="tonexty", name="Outer band"))
 
         if show_inner:
             fig.add_trace(go.Scatter(x=x_fc, y=hi30, mode="lines", line=dict(width=0), name="", showlegend=False, hoverinfo="skip"))
-            fig.add_trace(go.Scatter(x=x_fc, y=lo30, mode="lines", line=dict(width=0), fill="tonexty", name="Inner band (30%)"))
+            fig.add_trace(go.Scatter(x=x_fc, y=lo30, mode="lines", line=dict(width=0), fill="tonexty", name="Inner band"))
 
         if show_bounds_lines:
-            fig.add_trace(go.Scatter(x=x_fc, y=hi68, mode="lines+markers", name="Upper 68"))
-            fig.add_trace(go.Scatter(x=x_fc, y=hi30, mode="lines+markers", name="Upper 30"))
-            fig.add_trace(go.Scatter(x=x_fc, y=lo30, mode="lines+markers", name="Lower 30"))
-            fig.add_trace(go.Scatter(x=x_fc, y=lo68, mode="lines+markers", name="Lower 68"))
+            fig.add_trace(go.Scatter(x=x_fc, y=hi68, mode="lines+markers", name="UB 68"))
+            fig.add_trace(go.Scatter(x=x_fc, y=hi30, mode="lines+markers", name="UB 30"))
+            fig.add_trace(go.Scatter(x=x_fc, y=lo30, mode="lines+markers", name="LB 30"))
+            fig.add_trace(go.Scatter(x=x_fc, y=lo68, mode="lines+markers", name="LB 68"))
 
         fig.add_trace(go.Scatter(x=x_fc, y=y_fc, mode="lines+markers", name="Forecast"))
 
@@ -479,7 +441,6 @@ def make_plot(hist_df: pd.DataFrame, fc_df: pd.DataFrame, station: str, old_year
 # ------------------------------
 
 st.set_page_config(page_title="ARIMA Groundwater Forecast App", layout="wide")
-require_login()
 st.title("ARIMA Groundwater Forecast App")
 st.caption("Upload the historical Excel file, run the forecast, review plots, and download the results workbook.")
 
@@ -499,17 +460,23 @@ with st.sidebar:
     st.header("Forecast settings")
     input_sheet = st.text_input("Input sheet name", value=DEFAULT_INPUT_SHEET)
     min_year = st.number_input("Minimum year", value=DEFAULT_MIN_YEAR, step=1)
-    min_obs = st.number_input("Minimum consecutive observations", value=DEFAULT_MIN_OBS, step=1)
     target_year = st.number_input("Target forecast year", value=DEFAULT_TARGET_YEAR, step=1)
-    max_backtest_points = st.number_input("Max backtest points", value=DEFAULT_MAX_BACKTEST_POINTS, step=1)
-    min_train_for_backtest = st.number_input("Min train length for backtest", value=DEFAULT_MIN_TRAIN_FOR_BACKTEST, step=1)
-    alpha_68 = st.number_input("Alpha for 68% central interval", value=DEFAULT_ALPHA_68, min_value=0.0, max_value=1.0)
-    alpha_30 = st.number_input("Alpha for 30% central interval", value=DEFAULT_ALPHA_30, min_value=0.0, max_value=1.0)
+    alpha_68 = st.number_input("Alpha for UB central interval", value=DEFAULT_ALPHA_68, min_value=0.0, max_value=1.0)
+    alpha_30 = st.number_input("Alpha for LB central interval", value=DEFAULT_ALPHA_30, min_value=0.0, max_value=1.0)
+
+    st.info(
+        "Fixed model settings: minimum 15 consecutive observations, "
+        "8 backtest points, minimum training length 10."
+    )
 
     st.subheader("ARIMA candidate orders")
     p_candidates = st.multiselect("p candidates", options=list(range(0, 6)), default=DEFAULT_P)
     d_candidates = st.multiselect("d candidates", options=list(range(0, 4)), default=DEFAULT_D)
     q_candidates = st.multiselect("q candidates", options=list(range(0, 6)), default=DEFAULT_Q)
+
+min_obs = DEFAULT_MIN_OBS
+max_backtest_points = DEFAULT_MAX_BACKTEST_POINTS
+min_train_for_backtest = DEFAULT_MIN_TRAIN_FOR_BACKTEST
 
 run_button = st.button("Run forecast", type="primary", disabled=uploaded_file is None)
 
@@ -574,9 +541,9 @@ if fc_df is not None and mi_df is not None:
 
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            show_outer = st.checkbox("Show outer band (68%)", value=True)
+            show_outer = st.checkbox("Show outer band", value=True)
         with c2:
-            show_inner = st.checkbox("Show inner band (30%)", value=True)
+            show_inner = st.checkbox("Show inner band", value=True)
         with c3:
             rotate_labels = st.checkbox("Rotate x-axis labels", value=True)
         with c4:
