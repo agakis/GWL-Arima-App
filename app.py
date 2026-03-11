@@ -27,6 +27,9 @@ DEFAULT_ALPHA_68 = 0.32  # central 68%
 DEFAULT_ALPHA_30 = 0.70  # central 30%
 DEFAULT_OLD_YEAR = 1988
 
+min_obs = DEFAULT_MIN_OBS
+max_backtest_points = DEFAULT_MAX_BACKTEST_POINTS
+min_train_for_backtest = DEFAULT_MIN_TRAIN_FOR_BACKTEST
 # ------------------------------
 # Helper functions
 # ------------------------------
@@ -499,12 +502,12 @@ with st.sidebar:
     st.header("Forecast settings")
     input_sheet = st.text_input("Input sheet name", value=DEFAULT_INPUT_SHEET)
     min_year = st.number_input("Minimum year", value=DEFAULT_MIN_YEAR, step=1)
-    min_obs = st.number_input("Minimum consecutive observations", value=DEFAULT_MIN_OBS, step=1)
+  #   min_obs = st.number_input("Minimum consecutive observations", value=DEFAULT_MIN_OBS, step=1)
     target_year = st.number_input("Target forecast year", value=DEFAULT_TARGET_YEAR, step=1)
-    max_backtest_points = st.number_input("Max backtest points", value=DEFAULT_MAX_BACKTEST_POINTS, step=1)
-    min_train_for_backtest = st.number_input("Min train length for backtest", value=DEFAULT_MIN_TRAIN_FOR_BACKTEST, step=1)
-    alpha_68 = st.number_input("Alpha for 68% central interval", value=DEFAULT_ALPHA_68, min_value=0.0, max_value=1.0)
-    alpha_30 = st.number_input("Alpha for 30% central interval", value=DEFAULT_ALPHA_30, min_value=0.0, max_value=1.0)
+   #  max_backtest_points = st.number_input("Max backtest points", value=DEFAULT_MAX_BACKTEST_POINTS, step=1)
+   #  min_train_for_backtest = st.number_input("Min train length for backtest", value=DEFAULT_MIN_TRAIN_FOR_BACKTEST, step=1)
+    alpha_68 = st.number_input("Alpha for UB", value=DEFAULT_ALPHA_68, min_value=0.0, max_value=1.0)
+    alpha_30 = st.number_input("Alpha forLB", value=DEFAULT_ALPHA_30, min_value=0.0, max_value=1.0)
 
     st.subheader("ARIMA candidate orders")
     p_candidates = st.multiselect("p candidates", options=list(range(0, 6)), default=DEFAULT_P)
@@ -574,9 +577,9 @@ if fc_df is not None and mi_df is not None:
 
         c1, c2, c3, c4 = st.columns(4)
         with c1:
-            show_outer = st.checkbox("Show outer band (68%)", value=True)
+            show_outer = st.checkbox("Show UB", value=True)
         with c2:
-            show_inner = st.checkbox("Show inner band (30%)", value=True)
+            show_inner = st.checkbox("Show LB", value=True)
         with c3:
             rotate_labels = st.checkbox("Rotate x-axis labels", value=True)
         with c4:
