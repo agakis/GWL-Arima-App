@@ -16,9 +16,22 @@ DEFAULT_ROTATE = True
 DEFAULT_SHOW_INNER = True
 DEFAULT_SHOW_OUTER = True
 
-# Same alphas as forecast script
+# ---------------- USER SETTINGS ----------------
+# These are ONLY labels for the plot legend / checkboxes
 ALPHA_OUTER = 0.20
 ALPHA_INNER = 0.60
+
+# These define which forecast columns are plotted as outer / inner bands.
+# Adjust these to match the workbook produced by arima_AG.py.
+OUTER_LOW_COL = "lo_68"
+OUTER_HIGH_COL = "hi_68"
+INNER_LOW_COL = "lo_30"
+INNER_HIGH_COL = "hi_30"
+# ----------------------------------------------
+
+
+def station_key(s) -> str:
+    return str(s).strip().lower()
 
 
 def alpha_str(alpha: float) -> str:
@@ -34,11 +47,11 @@ def conf_label(alpha: float) -> str:
 
 
 def upper_label(alpha: float) -> str:
-    return f"Upper (1−α), α={alpha_str(alpha)} ({conf_pct(alpha):.0f}%)"
+    return f"Upper bound, α={alpha_str(alpha)} ({conf_pct(alpha):.0f}%)"
 
 
 def lower_label(alpha: float) -> str:
-    return f"Lower (1−α), α={alpha_str(alpha)} ({conf_pct(alpha):.0f}%)"
+    return f"Lower bound, α={alpha_str(alpha)} ({conf_pct(alpha):.0f}%)"
 
 
 def yes_no_stationary(val) -> str:
@@ -89,16 +102,19 @@ def load_hist(excel_path: str) -> pd.DataFrame:
 @st.cache_data
 def load_fc(excel_path: str) -> pd.DataFrame:
     df = pd.read_excel(excel_path, sheet_name=FC_SHEET, engine="openpyxl")
+
     required = {
         "station", "year", "forecast",
-        "lo_68", "hi_68", "lo_30", "hi_30"
+        OUTER_LOW_COL, OUTER_HIGH_COL, INNER_LOW_COL, INNER_HIGH_COL
     }
-    if not required.issubset(df.columns):
-        raise KeyError(f"Forecast sheet must contain columns: {required}")
+    missing = required - set(df.columns)
+    if missing:
+        raise KeyError(f"Forecast sheet missing columns: {sorted(missing)}")
 
     df["year"] = pd.to_numeric(df["year"], errors="coerce")
     df = df.dropna(subset=["year"]).copy()
     df["year"] = df["year"].astype(int)
+    df["_station_key"] = df["station"].map(station_key)
     return df
 
 
@@ -106,12 +122,13 @@ def load_fc(excel_path: str) -> pd.DataFrame:
 def load_modelinfo(excel_path: str) -> pd.DataFrame:
     df = pd.read_excel(excel_path, sheet_name=MODELINFO_SHEET, engine="openpyxl")
     if "station" not in df.columns:
-        raise KeyError("Model info sheet must contain column: 'station'")
+        raise KeyError("Model info sheet must contain column 'station'")
+    df["_station_key"] = df["station"].map(station_key)
     return df
 
 
 def build_hist_series(hist_df: pd.DataFrame, station: str) -> pd.Series:
-    rows = hist_df[hist_df["station"].astype(str).str.strip() == str(station).strip()]
+    rows = hist_df[hist_df["station"].map(station_key) == station_key(station)]
     if rows.empty:
         return pd.Series(dtype=float)
 
@@ -142,6 +159,7 @@ def main():
 
     stations = sorted(set(hist["station"].astype(str)) | set(fc["station"].astype(str)))
     station = st.selectbox("Choose station", stations)
+    skey = station_key(station)
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -158,8 +176,8 @@ def main():
         st.warning("No historical data for this station.")
         return
 
-    fc_station = fc[fc["station"].astype(str).str.strip() == str(station).strip()].copy()
-    mi_station = mi[mi["station"].astype(str).str.strip() == str(station).strip()].copy()
+    fc_station = fc[fc["_station_key"] == skey].copy()
+    mi_station = mi[mi["_station_key"] == skey].copy()
 
     if fc_station.empty and mi_station.empty:
         st.warning("No forecast/model information found for this station.")
@@ -208,6 +226,7 @@ def main():
         row = mi_station.iloc[0]
 
         st.subheader("Model diagnostics")
+
         m1, m2, m3, m4 = st.columns(4)
         with m1:
             st.metric("ARIMA order", str(row["order"]) if "order" in row and pd.notna(row["order"]) else "—")
@@ -224,23 +243,29 @@ def main():
             st.metric("ADF stat", format_value(row["adf_stat"], ".4f") if "adf_stat" in row else "—")
             st.metric("ADF p-value", format_value(row["adf_pvalue"], ".4f") if "adf_pvalue" in row else "—")
 
-        if "adf_stationary_5pct" in row:
-            st.info(f"ADF stationary at 5% level: **{yes_no_stationary(row['adf_stationary_5pct'])}**")
+        st.caption(
+            " | ".join([
+                f"Order: {row['order']}" if "order" in row and pd.notna(row["order"]) else "Order: —",
+                f"RMSE: {format_value(row['rmse'], '.4f')}" if "rmse" in row else "RMSE: —",
+                f"AIC: {format_value(row['aic'], '.2f')}" if "aic" in row else "AIC: —",
+                f"ADF p-value: {format_value(row['adf_pvalue'], '.4f')}" if "adf_pvalue" in row else "ADF p-value: —",
+                f"Stationary at 5%: {yes_no_stationary(row['adf_stationary_5pct'])}" if "adf_stationary_5pct" in row else "Stationary at 5%: —",
+            ])
+        )
 
     fig = go.Figure()
 
     if not fc_plot.empty:
         x_fc = fc_plot["year"].to_numpy(int)
         y_fc = fc_plot["forecast"].to_numpy(float)
-        lo_outer = fc_plot["lo_68"].to_numpy(float)
-        hi_outer = fc_plot["hi_68"].to_numpy(float)
-        lo_inner = fc_plot["lo_30"].to_numpy(float)
-        hi_inner = fc_plot["hi_30"].to_numpy(float)
+        lo_outer = fc_plot[OUTER_LOW_COL].to_numpy(float)
+        hi_outer = fc_plot[OUTER_HIGH_COL].to_numpy(float)
+        lo_inner = fc_plot[INNER_LOW_COL].to_numpy(float)
+        hi_inner = fc_plot[INNER_HIGH_COL].to_numpy(float)
 
         if show_outer:
             fig.add_trace(go.Scatter(
-                x=x_fc,
-                y=hi_outer,
+                x=x_fc, y=hi_outer,
                 mode="lines",
                 line=dict(width=0),
                 name="",
@@ -248,8 +273,7 @@ def main():
                 hoverinfo="skip",
             ))
             fig.add_trace(go.Scatter(
-                x=x_fc,
-                y=lo_outer,
+                x=x_fc, y=lo_outer,
                 mode="lines",
                 line=dict(width=0),
                 fill="tonexty",
@@ -258,8 +282,7 @@ def main():
 
         if show_inner:
             fig.add_trace(go.Scatter(
-                x=x_fc,
-                y=hi_inner,
+                x=x_fc, y=hi_inner,
                 mode="lines",
                 line=dict(width=0),
                 name="",
@@ -267,8 +290,7 @@ def main():
                 hoverinfo="skip",
             ))
             fig.add_trace(go.Scatter(
-                x=x_fc,
-                y=lo_inner,
+                x=x_fc, y=lo_inner,
                 mode="lines",
                 line=dict(width=0),
                 fill="tonexty",
@@ -326,6 +348,13 @@ def main():
         hovermode="x unified",
         height=580,
         margin=dict(l=20, r=20, t=40, b=20),
+        legend=dict(
+            orientation="v",
+            yanchor="top",
+            y=1,
+            xanchor="left",
+            x=1.02
+        )
     )
 
     fig.update_xaxes(
@@ -346,13 +375,13 @@ def main():
 
     with st.expander("Show forecast table"):
         if not fc_station.empty:
-            st.dataframe(fc_station, use_container_width=True)
+            st.dataframe(fc_station.drop(columns=["_station_key"], errors="ignore"), use_container_width=True)
         else:
             st.write("No forecast rows for this station.")
 
     with st.expander("Show model info table"):
         if not mi_station.empty:
-            st.dataframe(mi_station, use_container_width=True)
+            st.dataframe(mi_station.drop(columns=["_station_key"], errors="ignore"), use_container_width=True)
         else:
             st.write("No model info row for this station.")
 
